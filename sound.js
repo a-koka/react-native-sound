@@ -226,15 +226,9 @@ Sound.prototype.setSpeakerphoneOn = function(value) {
 };
 
 // ios only
-Sound.prototype.fade = function(
-  type,
-  steps,
-  frequency,
-  initialVolume,
-  callback
-) {
+Sound.prototype.fade = function(type, duration, volumeMultiplier, callback) {
   if (ReactNative.Platform.OS === "ios") {
-    RNSound.fade(this._key, type, steps, frequency, initialVolume, callback);
+    RNSound.fade(this._key, type, duration, volumeMultiplier, callback);
   }
 };
 

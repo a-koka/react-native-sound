@@ -9,8 +9,6 @@
 @implementation RNSound {
     NSMutableDictionary *_playerPool;
     NSMutableDictionary *_callbackPool;
-    NSMutableDictionary* _timerPool;
-    NSMutableDictionary* _timerCallbackPool;
 }
 
 @synthesize _key = _key;
@@ -86,28 +84,6 @@
             [[self callbackPool] removeObjectForKey:key];
         }
     }
-}
-
--(NSMutableDictionary*) timerPool {
-    if (!_timerPool) {
-        _timerPool = [NSMutableDictionary new];
-    }
-    return _timerPool;
-}
-
--(NSMutableDictionary*) timerCallbackPool {
-    if (!_timerCallbackPool) {
-        _timerCallbackPool = [NSMutableDictionary new];
-    }
-    return _timerCallbackPool;
-}
-
--(NSTimer*) timerForKey:(nonnull NSNumber*)key {
-    return [[self timerPool] objectForKey:key];
-}
-
--(RCTResponseSenderBlock) timerCallbackForKey:(nonnull NSNumber*)key {
-    return [[self timerCallbackPool] objectForKey:key];
 }
 
 RCT_EXPORT_MODULE();
@@ -302,8 +278,6 @@ RCT_EXPORT_METHOD(release : (nonnull NSNumber *)key) {
             [player stop];
             [[self callbackPool] removeObjectForKey:key];
             [[self playerPool] removeObjectForKey:key];
-            [[self timerPool] removeObjectForKey:key];
-            [[self timerCallbackPool] removeObjectForKey:key];
             NSNotificationCenter *notificationCenter =
                 [NSNotificationCenter defaultCenter];
             [notificationCenter removeObserver:self];
@@ -402,89 +376,29 @@ RCT_EXPORT_METHOD(setSpeakerPhone : (BOOL)on) {
 
 RCT_EXPORT_METHOD(fade:(nonnull NSNumber*)key
                   withValue:(nonnull NSString*)type
-                  withValue:(nonnull NSNumber*)steps
-                  withValue:(nonnull NSNumber*)frequency
-                  withValue:(nonnull NSNumber*)initialVolume
+                  withValue:(nonnull NSNumber*)durationMs
+                  withValue:(nonnull NSNumber*)volumeMultiplier
                   withCallback:(RCTResponseSenderBlock)callback) {
     AVAudioPlayer* player = [self playerForKey:key];
     if (player) {
-        NSMutableDictionary* userInfo = [[NSMutableDictionary alloc] init];
-        [userInfo setObject:key forKey:@"key"];
-        [userInfo setObject:type forKey:@"type"];
-        [userInfo setValue:steps forKey:@"steps"];
-        [userInfo setObject:initialVolume forKey:@"initialVolume"];
+        float duration = [durationMs floatValue] / 1000;
+        float multiplier = [volumeMultiplier floatValue];
 
-        // Avoid overlapping fadeIn and fadeOut
-        NSTimer* existingTimer = [self timerForKey:key];
-        if(existingTimer){
-            [existingTimer invalidate];
+        float volume = 0;
+        if([type isEqualToString:@"fadeIn"]){
+            volume = multiplier * 1;
+        }else if([type isEqualToString:@"fadeOut"]){
+            volume = multiplier * 0;
         }
 
-        double frequencyInSeconds = [frequency doubleValue] / 1000;
-        NSTimer* timer = [NSTimer timerWithTimeInterval:frequencyInSeconds target:self selector:@selector(fadeTick:) userInfo:userInfo repeats:YES];
-
-        [[self timerPool] setObject:timer forKey:key];
-        [[self timerCallbackPool] setObject:[callback copy] forKey:key];
-
-        [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes]; // Threads in react-native have to run on the mainRunLoop
-        [timer fire]; // Fire right away
+        dispatch_async(dispatch_get_main_queue(), ^{
+          [player setVolume:volume fadeDuration:duration];
+          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, duration * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+              callback(@[]);
+          });
+        });
     } else {
         callback(@[@(-1), @(false)]);
-    }
-}
-
--(void) fadeTick:(NSTimer*)timer {
-    NSMutableDictionary* userInfo = [timer userInfo];
-    NSNumber* key = userInfo[@"key"];
-    NSString* type = userInfo[@"type"];
-    int steps = [userInfo[@"steps"] intValue];
-    float initialVolume = [userInfo[@"initialVolume"] floatValue];
-
-    int count;
-
-    if([type isEqualToString:@"fadeIn"]){
-        if(userInfo[@"count"]){
-            count = [userInfo[@"count"] intValue];
-        }else{
-            count = steps - 1; // Initialize count
-        }
-    }else if([type isEqualToString:@"fadeOut"]){
-        if(userInfo[@"count"]){
-            count = [userInfo[@"count"] intValue];
-        }else{
-            count = 1; // Initialize count
-        }
-    }else{
-        RCTResponseSenderBlock callback = [self timerCallbackForKey:key];
-        callback(@[@(-1), @(false)]);
-        return;
-    }
-
-    float percent = (float)(steps - count) / steps;
-    float fadeVolume = pow(percent, 1.5);
-
-    AVAudioPlayer* player = [self playerForKey:key];
-    float volume = fadeVolume * initialVolume;
-    player.volume = volume;
-
-    if([type isEqualToString:@"fadeIn"]){
-        if(count == 0){
-            [timer invalidate];
-            RCTResponseSenderBlock callback = [self timerCallbackForKey:key];
-            callback(@[]);
-            return;
-        }
-
-        [userInfo setValue:[NSNumber numberWithInt:--count] forKey:@"count"];
-    }else if([type isEqualToString:@"fadeOut"]){
-        if(count == steps){
-            [timer invalidate];
-            RCTResponseSenderBlock callback = [self timerCallbackForKey:key];
-            callback(@[]);
-            return;
-        }
-
-        [userInfo setValue:[NSNumber numberWithInt:++count] forKey:@"count"];
     }
 }
 @end
